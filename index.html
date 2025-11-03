@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Update inbox "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Call first "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -78,12 +78,15 @@
                  <div class="bg-white p-6 rounded-lg shadow-md">
                     <div class="flex justify-between items-center mb-4">
                         <h2 class="text-xl font-bold">Live Queue</h2>
-                        <button id="call-next-btn" class="bg-green-600 text-white py-2 px-6 rounded-md hover:bg-green-700 font-bold disabled:bg-green-300">Call Next</button>
+                        <button id="call-btn" class="bg-green-600 text-white py-2 px-6 rounded-md hover:bg-green-700 font-bold disabled:bg-green-300">
+                            <span id="call-btn-text">Call Next</span>
+                        </button>
                     </div>
                     <div class="max-h-96 overflow-y-auto">
                         <table class="w-full text-sm text-left">
                             <thead class="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0">
                                 <tr>
+                                    <th class="px-2 py-3">Prioritize</th>
                                     <th class="px-4 py-3">Token #</th>
                                     <th class="px-4 py-3">Name</th>
                                     <th class="px-4 py-3">For</th>
@@ -133,6 +136,7 @@
         let notifications = [];
         let unreadCount = 0;
         let inboxUnreadCount = 0;
+        let currentQueueData = {};
         
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -230,27 +234,30 @@
         }
         
         function displayQueue(queueData, currentWorkerTasks) {
+            currentQueueData = queueData;
             const tbody = document.getElementById('queue-tbody');
             // Clear all existing intervals first to prevent memory leaks
             Object.values(countdownIntervals).forEach(clearInterval);
             countdownIntervals = {};
             
             if (Object.keys(queueData).length === 0) {
-                tbody.innerHTML = '<tr><td colspan="5" class="text-center p-8 text-gray-500">The queue is empty.</td></tr>';
-                document.getElementById('call-next-btn').disabled = true;
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center p-8 text-gray-500">The queue is empty.</td></tr>';
+                updateCallButtonState();
                 return;
             }
 
             const sortedQueue = Object.entries(queueData).sort(([, a], [, b]) => a.tokenNumber - b.tokenNumber);
 
-            // 1. Build the entire HTML string first for performance and to ensure elements exist.
             const rowsHtml = sortedQueue.map(([key, customer]) => {
                 let statusClass = '';
                 let statusText = customer.status.charAt(0).toUpperCase() + customer.status.slice(1);
+                let priorityCheckbox = '';
+
                 if (customer.status === 'serving') {
                     statusClass = 'bg-green-100 text-green-800 font-bold';
                 } else if (customer.status === 'waiting') {
                     statusClass = 'bg-yellow-100 text-yellow-800';
+                    priorityCheckbox = `<input type="checkbox" class="priority-checkbox h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500" data-customer-id="${key}">`;
                 } else { // completed
                      statusClass = 'bg-gray-100 text-gray-500 line-through';
                 }
@@ -262,7 +269,6 @@
                     if (task && task.status === 'Completed') {
                         actionsHtml = `<span class="font-bold text-green-600">Task Complete!</span>`;
                     } else if (task && task.eta && task.etaSetTimestamp) {
-                        // Just prepare the placeholder div. The countdown will be started later.
                         actionsHtml = `<div id="countdown-${key}" class="font-semibold text-lg">--:--</div>`;
                     } else {
                          actionsHtml = `<span class="text-xs text-gray-500">Awaiting worker ETA...</span>`;
@@ -271,6 +277,7 @@
 
                 return `
                     <tr class="border-b">
+                        <td class="px-2 py-3 text-center">${priorityCheckbox}</td>
                         <td class="px-4 py-3 font-bold text-lg">${customer.tokenNumber}</td>
                         <td class="px-4 py-3">${customer.customerName}</td>
                         <td class="px-4 py-3 text-gray-600">${customer.appointmentFor}</td>
@@ -280,22 +287,36 @@
                 `;
             }).join('');
             
-            // 2. Set the innerHTML of the table body in one go.
             tbody.innerHTML = rowsHtml;
             
-            // 3. Now that all elements are in the DOM, iterate again to start countdowns.
             sortedQueue.forEach(([key, customer]) => {
                 if (customer.status === 'serving') {
                     const task = Object.values(currentWorkerTasks).find(t => t.orderId === key);
-                    // Add status check here
                     if (task && task.status !== 'Completed' && task.eta && task.etaSetTimestamp) {
                         startCountdown(key, task.eta, task.etaSetTimestamp);
                     }
                 }
             });
-            
-            const hasWaiting = sortedQueue.some(([, cust]) => cust.status === 'waiting');
-            document.getElementById('call-next-btn').disabled = !hasWaiting;
+
+            document.querySelectorAll('.priority-checkbox').forEach(cb => {
+                cb.addEventListener('change', updateCallButtonState);
+            });
+            updateCallButtonState();
+        }
+
+        function updateCallButtonState() {
+            const btn = document.getElementById('call-btn');
+            const btnText = document.getElementById('call-btn-text');
+            const selectedCount = document.querySelectorAll('.priority-checkbox:checked').length;
+            const hasWaiting = Object.values(currentQueueData).some(c => c.status === 'waiting');
+
+            btn.disabled = !hasWaiting;
+
+            if (selectedCount > 0) {
+                btnText.textContent = `Call Selected (${selectedCount})`;
+            } else {
+                btnText.textContent = 'Call Next';
+            }
         }
 
         function startCountdown(orderId, etaMinutes, etaSetTimestamp) {
@@ -303,21 +324,25 @@
             if (!countdownEl) return;
 
             const updateCountdown = () => {
+                const liveTask = Object.values(workerTasks).find(t => t.orderId === orderId);
+
+                if (liveTask && liveTask.status === 'Completed') {
+                    countdownEl.textContent = "Completed!";
+                    countdownEl.classList.remove('countdown-overdue');
+                    clearInterval(countdownIntervals[orderId]);
+                    delete countdownIntervals[orderId];
+                    return;
+                }
+
                 const totalSeconds = etaMinutes * 60;
                 const elapsedSeconds = (Date.now() - etaSetTimestamp) / 1000;
                 const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
 
-                if (remainingSeconds === 0) {
-                    // THE FIX: Before declaring "Overdue", check the live status.
-                    const liveTask = Object.values(workerTasks).find(t => t.orderId === orderId);
-                    if (liveTask && liveTask.status === 'Completed') {
-                        countdownEl.textContent = "Completed!";
-                        countdownEl.classList.remove('countdown-overdue');
-                    } else {
-                        countdownEl.textContent = "Overdue";
-                        countdownEl.classList.add('countdown-overdue');
-                    }
+                if (remainingSeconds <= 0) {
+                    countdownEl.textContent = "Overdue";
+                    countdownEl.classList.add('countdown-overdue');
                     clearInterval(countdownIntervals[orderId]);
+                    delete countdownIntervals[orderId];
                 } else {
                     const minutes = Math.floor(remainingSeconds / 60);
                     const seconds = Math.floor(remainingSeconds % 60);
@@ -377,33 +402,48 @@
             }
         }
         
-        async function callNextCustomer() {
+        async function handleCall() {
             const queueRef = db.ref('tokenQueue');
-            const snapshot = await queueRef.orderByChild('status').equalTo('waiting').limitToFirst(1).once('value');
-            
-            const waitingCustomers = snapshot.val();
-            if (!waitingCustomers) {
+            const snapshot = await queueRef.once('value');
+            const queueData = snapshot.val() || {};
+
+            const servingCustomerEntry = Object.entries(queueData).find(([, cust]) => cust.status === 'serving');
+            const allWaiting = Object.entries(queueData).filter(([, cust]) => cust.status === 'waiting');
+
+            if (allWaiting.length === 0) {
                 showToast("No one is waiting in the queue.");
                 return;
             }
-            
-            const nextCustomerId = Object.keys(waitingCustomers)[0];
-            const nextCustomer = waitingCustomers[nextCustomerId];
 
-            const servingSnapshot = await queueRef.orderByChild('status').equalTo('serving').once('value');
-            const servingCustomer = servingSnapshot.val();
+            let nextCustomerToCall = null;
+            const selectedIds = Array.from(document.querySelectorAll('.priority-checkbox:checked')).map(cb => cb.dataset.customerId);
+
+            if (selectedIds.length > 0) {
+                const selectedWaiting = allWaiting.filter(([id]) => selectedIds.includes(id));
+                if (selectedWaiting.length > 0) {
+                    selectedWaiting.sort(([, a], [, b]) => a.tokenNumber - b.tokenNumber);
+                    nextCustomerToCall = selectedWaiting[0][1];
+                } else {
+                    showToast("Selected customer is no longer waiting.");
+                    return;
+                }
+            } else {
+                allWaiting.sort(([, a], [, b]) => a.tokenNumber - b.tokenNumber);
+                nextCustomerToCall = allWaiting[0][1];
+            }
             
+            if (!nextCustomerToCall) return;
+
             const updates = {};
-            updates[`/${nextCustomerId}/status`] = 'serving';
-            updates[`/${nextCustomerId}/notified`] = false;
+            updates[`/${nextCustomerToCall.id}/status`] = 'serving';
+            updates[`/${nextCustomerToCall.id}/notified`] = false;
 
-            if (servingCustomer) {
-                const servingCustomerId = Object.keys(servingCustomer)[0];
-                updates[`/${servingCustomerId}/status`] = 'completed';
+            if (servingCustomerEntry) {
+                updates[`/${servingCustomerEntry[0]}/status`] = 'completed';
             }
             
             await queueRef.update(updates);
-            showToast(`Calling token #${nextCustomer.tokenNumber} - ${nextCustomer.customerName}`);
+            showToast(`Calling token #${nextCustomerToCall.tokenNumber} - ${nextCustomerToCall.customerName}`);
         }
         
         async function removeCustomer(customerId) {
@@ -472,7 +512,7 @@
                 });
 
                 document.getElementById('appointment-form').addEventListener('submit', saveAppointment);
-                document.getElementById('call-next-btn').addEventListener('click', callNextCustomer);
+                document.getElementById('call-btn').addEventListener('click', handleCall);
                 
                 // Notification Bell Listener
                 const bell = document.getElementById('notification-bell');
