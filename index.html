@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Count down show "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Liv count down "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -91,12 +91,21 @@
         
         let db;
         let countdownIntervals = {};
+        let previousWorkerTasks = {};
         
         function showToast(message) {
             const toast = document.getElementById('toast');
             toast.textContent = message;
             toast.classList.remove('hidden');
             setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+
+        function speak(text) {
+            if (!('speechSynthesis' in window)) return;
+            speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(text);
+            utterance.lang = 'en-IN';
+            speechSynthesis.speak(utterance);
         }
         
         function displayQueue(queueData, workerTasks) {
@@ -129,7 +138,9 @@
                 
                 if (customer.status === 'serving') {
                     const task = Object.values(workerTasks).find(t => t.orderId === key);
-                    if (task && task.eta && task.etaSetTimestamp) {
+                    if (task && task.status === 'Completed') {
+                        actionsHtml = `<span class="font-bold text-green-600">Task Complete!</span>`;
+                    } else if (task && task.eta && task.etaSetTimestamp) {
                         actionsHtml = `<div id="countdown-${key}" class="font-semibold text-lg">--:--</div>`;
                         startCountdown(key, task.eta, task.etaSetTimestamp);
                     } else {
@@ -271,8 +282,25 @@
                 db.ref().on('value', (snapshot) => {
                     const data = snapshot.val() || {};
                     const queueData = data.tokenQueue || {};
-                    const workerTasks = data.workerTasks || {};
-                    displayQueue(queueData, workerTasks);
+                    const newWorkerTasks = data.workerTasks || {};
+                    
+                    // Check for completed tasks for voice notification
+                    Object.keys(newWorkerTasks).forEach(taskId => {
+                        const currentTask = newWorkerTasks[taskId];
+                        const previousTask = previousWorkerTasks[taskId];
+
+                        if (currentTask && previousTask && previousTask.status !== 'Completed' && currentTask.status === 'Completed') {
+                            const customer = Object.values(queueData).find(c => c.id === currentTask.orderId);
+                            if (customer) {
+                                const message = `${customer.customerName}'s task for ${customer.appointmentFor} is complete.`;
+                                showToast(message);
+                                speak(message);
+                            }
+                        }
+                    });
+
+                    previousWorkerTasks = newWorkerTasks; // Update state for next check
+                    displayQueue(queueData, newWorkerTasks);
                 });
 
                 document.getElementById('appointment-form').addEventListener('submit', saveAppointment);
@@ -288,4 +316,4 @@
     </script>
 
 
-<script src="./script.js"></script></body></html>
+  <script src="./script.js"></script></body></html>
