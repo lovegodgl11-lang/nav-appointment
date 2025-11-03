@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Update version "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Update bell icon "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -16,13 +16,28 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
         .countdown-overdue { color: #ef4444; font-weight: bold; }
+        #notification-badge { top: -4px; right: -4px; }
+        .notification-dropdown { display: none; }
+        .notification-dropdown.show { display: block; }
+        .notification-item.unread { background-color: #eef2ff; }
     </style>
 
 
     <div class="max-w-5xl mx-auto">
         <header class="flex justify-between items-center mb-6">
             <h1 class="text-3xl font-bold text-gray-800">Receptionist Panel</h1>
-             <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
+            <div class="flex items-center gap-4">
+                 <div class="relative">
+                    <button id="notification-bell" class="relative text-gray-600 hover:text-indigo-600">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"></path></svg>
+                        <span id="notification-badge" class="absolute bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center hidden"></span>
+                    </button>
+                    <div id="notification-dropdown" class="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-xl hidden z-20 border max-h-96 overflow-y-auto">
+                        <!-- Notifications will be rendered here -->
+                    </div>
+                </div>
+                <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
+            </div>
         </header>
 
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -93,6 +108,10 @@
         let countdownIntervals = {};
         let previousWorkerTasks = {};
         let workerTasks = {}; // Made global for access in countdown
+        let workers = []; // To get worker names for notifications
+        
+        let notifications = [];
+        let unreadCount = 0;
         
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -107,6 +126,31 @@
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'en-IN';
             speechSynthesis.speak(utterance);
+        }
+
+        // --- NOTIFICATION SYSTEM ---
+        function addNotification(message, options = {}) {
+            notifications.unshift({ id: Date.now(), message, read: false, ...options });
+            unreadCount++;
+            updateNotificationUI();
+        }
+
+        function updateNotificationUI() {
+            const badge = document.getElementById('notification-badge');
+            const dropdown = document.getElementById('notification-dropdown');
+            
+            badge.textContent = unreadCount;
+            badge.classList.toggle('hidden', unreadCount === 0);
+
+            if (notifications.length === 0) {
+                dropdown.innerHTML = `<p class="p-4 text-center text-sm text-gray-500">No notifications</p>`;
+            } else {
+                dropdown.innerHTML = notifications.map(n => `
+                    <div class="p-3 border-b text-sm ${!n.read ? 'unread font-semibold' : 'text-gray-600'}">
+                        ${n.message}
+                    </div>
+                `).join('');
+            }
         }
         
         function displayQueue(queueData, currentWorkerTasks) {
@@ -304,18 +348,36 @@
                     const data = snapshot.val() || {};
                     const queueData = data.tokenQueue || {};
                     const newWorkerTasks = data.workerTasks || {};
-                    
+                    workers = Object.values(data.workers || {});
+
+                    // --- AUTOMATIC NOTIFICATION CLEANUP ---
+                    const activeOrderIds = new Set(Object.values(queueData).filter(o => o.status === 'serving' || o.status === 'waiting').map(o => o.id));
+                    const originalNotifCount = notifications.length;
+                    notifications = notifications.filter(n => !n.orderId || activeOrderIds.has(n.orderId));
+                    if (notifications.length < originalNotifCount) {
+                         unreadCount = notifications.filter(n => !n.read).length;
+                         updateNotificationUI();
+                    }
+                    // --- END CLEANUP ---
+
                     // Check for completed tasks for voice notification
                     Object.keys(newWorkerTasks).forEach(taskId => {
                         const currentTask = newWorkerTasks[taskId];
                         const previousTask = previousWorkerTasks[taskId];
 
-                        if (currentTask && previousTask && previousTask.status !== 'Completed' && currentTask.status === 'Completed') {
-                            const customer = Object.values(queueData).find(c => c.id === currentTask.orderId);
-                            if (customer) {
-                                const message = `${customer.customerName}'s task for ${customer.appointmentFor} is complete.`;
-                                showToast(message);
-                                speak(message);
+                        if (currentTask && previousTask) {
+                            if (previousTask.status !== 'Completed' && currentTask.status === 'Completed') {
+                                const customer = Object.values(queueData).find(c => c.id === currentTask.orderId);
+                                if (customer) {
+                                    const message = `${customer.customerName}'s task is complete.`;
+                                    addNotification(message, { orderId: currentTask.orderId });
+                                }
+                            }
+                            if (currentTask.delayReason && currentTask.delayReason !== previousTask.delayReason) {
+                                const worker = workers.find(w => w.id === currentTask.assignedTo);
+                                if(worker) {
+                                    addNotification(`Delay from ${worker.name}: ${currentTask.delayReason}`, { orderId: currentTask.orderId });
+                                }
                             }
                         }
                     });
@@ -327,6 +389,24 @@
 
                 document.getElementById('appointment-form').addEventListener('submit', saveAppointment);
                 document.getElementById('call-next-btn').addEventListener('click', callNextCustomer);
+                
+                // Notification Bell Listener
+                const bell = document.getElementById('notification-bell');
+                const dropdown = document.getElementById('notification-dropdown');
+                bell.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    dropdown.classList.toggle('show');
+                    if (dropdown.classList.contains('show')) {
+                        unreadCount = 0;
+                        notifications.forEach(n => n.read = true);
+                        updateNotificationUI();
+                    }
+                });
+                document.addEventListener('click', (e) => {
+                    if (!bell.contains(e.target) && !dropdown.contains(e.target)) {
+                        dropdown.classList.remove('show');
+                    }
+                });
 
             } catch (e) {
                 console.error("Firebase initialization failed:", e);
