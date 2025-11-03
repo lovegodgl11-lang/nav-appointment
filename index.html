@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Appointment booking "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Count down show "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -15,6 +15,7 @@
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        .countdown-overdue { color: #ef4444; font-weight: bold; }
     </style>
 
 
@@ -65,7 +66,7 @@
                                     <th class="px-4 py-3">Name</th>
                                     <th class="px-4 py-3">For</th>
                                     <th class="px-4 py-3">Status</th>
-                                    <th class="px-4 py-3">Actions</th>
+                                    <th class="px-4 py-3">Actions / ETA</th>
                                 </tr>
                             </thead>
                             <tbody id="queue-tbody">
@@ -89,6 +90,7 @@
         };
         
         let db;
+        let countdownIntervals = {};
         
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -97,9 +99,12 @@
             setTimeout(() => toast.classList.add('hidden'), 3000);
         }
         
-        function displayQueue(queueData) {
+        function displayQueue(queueData, workerTasks) {
             const tbody = document.getElementById('queue-tbody');
             tbody.innerHTML = ''; // Clear existing rows
+             // Clear all existing intervals
+            Object.values(countdownIntervals).forEach(clearInterval);
+            countdownIntervals = {};
             
             if (Object.keys(queueData).length === 0) {
                 tbody.innerHTML = '<tr><td colspan="5" class="text-center p-8 text-gray-500">The queue is empty.</td></tr>';
@@ -107,7 +112,6 @@
                 return;
             }
 
-            // Sort by token number
             const sortedQueue = Object.entries(queueData).sort(([, a], [, b]) => a.tokenNumber - b.tokenNumber);
 
             sortedQueue.forEach(([key, customer]) => {
@@ -122,13 +126,15 @@
                 }
 
                 let actionsHtml = `<button onclick="removeCustomer('${key}')" class="text-red-500 hover:text-red-700 text-xs font-semibold">Remove</button>`;
+                
                 if (customer.status === 'serving') {
-                    actionsHtml = `
-                        <div class="flex items-center gap-2">
-                            <input type="number" id="eta-${key}" class="w-16 border rounded px-2 py-1 text-sm" placeholder="min" value="${customer.eta || ''}">
-                            <button onclick="setETA('${key}')" class="bg-blue-500 text-white text-xs px-2 py-1 rounded">Set ETA</button>
-                        </div>
-                    `;
+                    const task = Object.values(workerTasks).find(t => t.orderId === key);
+                    if (task && task.eta && task.etaSetTimestamp) {
+                        actionsHtml = `<div id="countdown-${key}" class="font-semibold text-lg">--:--</div>`;
+                        startCountdown(key, task.eta, task.etaSetTimestamp);
+                    } else {
+                         actionsHtml = `<span class="text-xs text-gray-500">Awaiting worker ETA...</span>`;
+                    }
                 }
 
                 const row = `
@@ -143,9 +149,33 @@
                 tbody.innerHTML += row;
             });
             
-            // Enable 'Call Next' if there are waiting customers
             const hasWaiting = sortedQueue.some(([, cust]) => cust.status === 'waiting');
             document.getElementById('call-next-btn').disabled = !hasWaiting;
+        }
+
+        function startCountdown(orderId, etaMinutes, etaSetTimestamp) {
+            const countdownEl = document.getElementById(`countdown-${orderId}`);
+            if (!countdownEl) return;
+
+            const updateCountdown = () => {
+                const totalSeconds = etaMinutes * 60;
+                const elapsedSeconds = (Date.now() - etaSetTimestamp) / 1000;
+                const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
+
+                if (remainingSeconds === 0) {
+                    countdownEl.textContent = "Overdue";
+                    countdownEl.classList.add('countdown-overdue');
+                    clearInterval(countdownIntervals[orderId]);
+                } else {
+                    const minutes = Math.floor(remainingSeconds / 60);
+                    const seconds = Math.floor(remainingSeconds % 60);
+                    countdownEl.textContent = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+                    countdownEl.classList.remove('countdown-overdue');
+                }
+            };
+
+            updateCountdown();
+            countdownIntervals[orderId] = setInterval(updateCountdown, 1000);
         }
         
         async function saveAppointment(e) {
@@ -161,7 +191,6 @@
             }
             
             try {
-                // Atomically increment the token counter
                 const counterRef = db.ref('tokenCounter');
                 const { committed, snapshot } = await counterRef.transaction(currentCount => {
                     return (currentCount || 0) + 1;
@@ -173,7 +202,6 @@
 
                 const newTokenNumber = snapshot.val();
                 
-                // Push new customer to the queue
                 const queueRef = db.ref('tokenQueue');
                 const newCustomerRef = queueRef.push();
                 
@@ -183,11 +211,9 @@
                     customerName: name,
                     customerMobile: mobile,
                     appointmentFor: appointmentFor,
-                    status: 'waiting', // 'waiting', 'serving', 'completed'
+                    status: 'waiting',
                     timestamp: firebase.database.ServerValue.TIMESTAMP,
-                    notified: false, // Flag to control voice notification
-                    eta: null,
-                    etaSetTimestamp: null
+                    notified: false
                 });
 
                 showToast(`Added ${name} to the queue with token #${newTokenNumber}`);
@@ -212,20 +238,16 @@
             const nextCustomerId = Object.keys(waitingCustomers)[0];
             const nextCustomer = waitingCustomers[nextCustomerId];
 
-            // Find currently serving customer to mark as completed
             const servingSnapshot = await queueRef.orderByChild('status').equalTo('serving').once('value');
             const servingCustomer = servingSnapshot.val();
             
             const updates = {};
-            // Set new customer to 'serving' and reset notification flag
             updates[`/${nextCustomerId}/status`] = 'serving';
             updates[`/${nextCustomerId}/notified`] = false;
 
             if (servingCustomer) {
                 const servingCustomerId = Object.keys(servingCustomer)[0];
                 updates[`/${servingCustomerId}/status`] = 'completed';
-                updates[`/${servingCustomerId}/eta`] = null; // Clear ETA
-                updates[`/${servingCustomerId}/etaSetTimestamp`] = null;
             }
             
             await queueRef.update(updates);
@@ -239,26 +261,6 @@
             }
         }
 
-        async function setETA(customerId) {
-            const etaInput = document.getElementById(`eta-${customerId}`);
-            const etaMinutes = parseInt(etaInput.value, 10);
-            if (isNaN(etaMinutes) || etaMinutes < 0) {
-                showToast("Please enter a valid number of minutes.");
-                return;
-            }
-            
-            try {
-                await db.ref('tokenQueue/' + customerId).update({
-                    eta: etaMinutes,
-                    etaSetTimestamp: firebase.database.ServerValue.TIMESTAMP
-                });
-                showToast(`ETA set to ${etaMinutes} minutes.`);
-            } catch (error) {
-                console.error("Error setting ETA:", error);
-                showToast("Failed to set ETA.");
-            }
-        }
-
         document.addEventListener('DOMContentLoaded', () => {
             try {
                 if (!firebase.apps.length) {
@@ -266,11 +268,11 @@
                 }
                 db = firebase.database();
                 
-                // Real-time listener for the queue
-                const queueRef = db.ref('tokenQueue').orderByChild('timestamp');
-                queueRef.on('value', (snapshot) => {
-                    const queueData = snapshot.val() || {};
-                    displayQueue(queueData);
+                db.ref().on('value', (snapshot) => {
+                    const data = snapshot.val() || {};
+                    const queueData = data.tokenQueue || {};
+                    const workerTasks = data.workerTasks || {};
+                    displayQueue(queueData, workerTasks);
                 });
 
                 document.getElementById('appointment-form').addEventListener('submit', saveAppointment);
@@ -282,9 +284,7 @@
             }
         });
 
-        // Make functions globally accessible for inline event handlers
         window.removeCustomer = removeCustomer;
-        window.setETA = setETA;
     </script>
 
 
