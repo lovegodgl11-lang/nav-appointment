@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Appointment booking "><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
+  "imports": {}
+}</script></head><body>
+
+
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Appointment &amp; Token Manager</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.15.0/firebase-database-compat.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+    </style>
+
+
+    <div class="max-w-5xl mx-auto">
+        <header class="flex justify-between items-center mb-6">
+            <h1 class="text-3xl font-bold text-gray-800">Receptionist Panel</h1>
+             <a href="Pc.html" class="text-sm font-semibold text-indigo-600 hover:text-indigo-800">← Project Hub</a>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div class="lg:col-span-1">
+                <div class="bg-white p-6 rounded-lg shadow-md">
+                    <h2 class="text-xl font-bold mb-4">New Appointment</h2>
+                    <form id="appointment-form" class="space-y-4">
+                        <div>
+                            <label for="customer-name" class="block text-sm font-medium text-gray-700">Customer Name</label>
+                            <input type="text" id="customer-name" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" required="">
+                        </div>
+                        <div>
+                            <label for="customer-mobile" class="block text-sm font-medium text-gray-700">Mobile Number (10 digits)</label>
+                            <input type="tel" id="customer-mobile" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" required="" pattern="\d{10}">
+                        </div>
+                        <div>
+                            <label for="appointment-for" class="block text-sm font-medium text-gray-700">Appointment For</label>
+                            <select id="appointment-for" class="mt-1 block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm" required="">
+                                <option value="Alterations">Alterations</option>
+                                <option value="New Stitching">New Stitching</option>
+                                <option value="Pickup">Order Pickup</option>
+                                <option value="Other">Other Inquiry</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-md hover:bg-indigo-700 font-semibold">Add to Queue</button>
+                    </form>
+                </div>
+            </div>
+
+            <div class="lg:col-span-2">
+                 <div class="bg-white p-6 rounded-lg shadow-md">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="text-xl font-bold">Live Queue</h2>
+                        <button id="call-next-btn" class="bg-green-600 text-white py-2 px-6 rounded-md hover:bg-green-700 font-bold disabled:bg-green-300">Call Next</button>
+                    </div>
+                    <div class="max-h-96 overflow-y-auto">
+                        <table class="w-full text-sm text-left">
+                            <thead class="text-xs text-gray-700 uppercase bg-gray-50 sticky top-0">
+                                <tr>
+                                    <th class="px-4 py-3">Token #</th>
+                                    <th class="px-4 py-3">Name</th>
+                                    <th class="px-4 py-3">For</th>
+                                    <th class="px-4 py-3">Status</th>
+                                    <th class="px-4 py-3">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="queue-tbody">
+                                <!-- Queue items will be injected here -->
+                            </tbody>
+                        </table>
+                    </div>
+                 </div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="toast" class="hidden fixed bottom-5 right-5 bg-gray-900 text-white py-2 px-4 rounded-lg shadow-lg"></div>
+
+    <script>
+        const firebaseConfig = {
+            apiKey: "AIzaSyC0_DQIiyaVQllFH4pxH1Dm3r2kFXXoOgc",
+            authDomain: "navrosetailorapp.firebaseapp.com",
+            databaseURL: "https://navrosetailorapp-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "navrosetailorapp"
+        };
+        
+        let db;
+        
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.remove('hidden');
+            setTimeout(() => toast.classList.add('hidden'), 3000);
+        }
+        
+        function displayQueue(queueData) {
+            const tbody = document.getElementById('queue-tbody');
+            tbody.innerHTML = ''; // Clear existing rows
+            
+            if (Object.keys(queueData).length === 0) {
+                tbody.innerHTML = '<tr><td colspan="5" class="text-center p-8 text-gray-500">The queue is empty.</td></tr>';
+                document.getElementById('call-next-btn').disabled = true;
+                return;
+            }
+
+            // Sort by token number
+            const sortedQueue = Object.entries(queueData).sort(([, a], [, b]) => a.tokenNumber - b.tokenNumber);
+
+            sortedQueue.forEach(([key, customer]) => {
+                let statusClass = '';
+                let statusText = customer.status.charAt(0).toUpperCase() + customer.status.slice(1);
+                if (customer.status === 'serving') {
+                    statusClass = 'bg-green-100 text-green-800 font-bold';
+                } else if (customer.status === 'waiting') {
+                    statusClass = 'bg-yellow-100 text-yellow-800';
+                } else { // completed
+                     statusClass = 'bg-gray-100 text-gray-500 line-through';
+                }
+
+                const row = `
+                    <tr class="border-b">
+                        <td class="px-4 py-3 font-bold text-lg">${customer.tokenNumber}</td>
+                        <td class="px-4 py-3">${customer.customerName}</td>
+                        <td class="px-4 py-3 text-gray-600">${customer.appointmentFor}</td>
+                        <td class="px-4 py-3"><span class="px-2 py-1 rounded-full text-xs ${statusClass}">${statusText}</span></td>
+                        <td class="px-4 py-3"><button onclick="removeCustomer('${key}')" class="text-red-500 hover:text-red-700 text-xs font-semibold">Remove</button></td>
+                    </tr>
+                `;
+                tbody.innerHTML += row;
+            });
+            
+            // Enable 'Call Next' if there are waiting customers
+            const hasWaiting = sortedQueue.some(([, cust]) => cust.status === 'waiting');
+            document.getElementById('call-next-btn').disabled = !hasWaiting;
+        }
+        
+        async function saveAppointment(e) {
+            e.preventDefault();
+            const form = e.target;
+            const name = form.querySelector('#customer-name').value;
+            const mobile = form.querySelector('#customer-mobile').value;
+            const appointmentFor = form.querySelector('#appointment-for').value;
+
+            if (!name || !mobile) {
+                showToast("Name and Mobile are required.");
+                return;
+            }
+            
+            try {
+                // Atomically increment the token counter
+                const counterRef = db.ref('tokenCounter');
+                const { committed, snapshot } = await counterRef.transaction(currentCount => {
+                    return (currentCount || 0) + 1;
+                });
+
+                if (!committed) {
+                    throw new Error("Could not get a new token number. Please try again.");
+                }
+
+                const newTokenNumber = snapshot.val();
+                
+                // Push new customer to the queue
+                const queueRef = db.ref('tokenQueue');
+                const newCustomerRef = queueRef.push();
+                
+                await newCustomerRef.set({
+                    id: newCustomerRef.key,
+                    tokenNumber: newTokenNumber,
+                    customerName: name,
+                    customerMobile: mobile,
+                    appointmentFor: appointmentFor,
+                    status: 'waiting', // 'waiting', 'serving', 'completed'
+                    timestamp: firebase.database.ServerValue.TIMESTAMP,
+                    notified: false // Flag to control voice notification
+                });
+
+                showToast(`Added ${name} to the queue with token #${newTokenNumber}`);
+                form.reset();
+
+            } catch (error) {
+                console.error("Error saving appointment:", error);
+                showToast("Failed to add to queue.");
+            }
+        }
+        
+        async function callNextCustomer() {
+            const queueRef = db.ref('tokenQueue');
+            const snapshot = await queueRef.orderByChild('status').equalTo('waiting').limitToFirst(1).once('value');
+            
+            const waitingCustomers = snapshot.val();
+            if (!waitingCustomers) {
+                showToast("No one is waiting in the queue.");
+                return;
+            }
+            
+            const nextCustomerId = Object.keys(waitingCustomers)[0];
+            const nextCustomer = waitingCustomers[nextCustomerId];
+
+            // Find currently serving customer to mark as completed
+            const servingSnapshot = await queueRef.orderByChild('status').equalTo('serving').once('value');
+            const servingCustomer = servingSnapshot.val();
+            
+            const updates = {};
+            // Set new customer to 'serving' and reset notification flag
+            updates[`/${nextCustomerId}/status`] = 'serving';
+            updates[`/${nextCustomerId}/notified`] = false;
+
+            if (servingCustomer) {
+                const servingCustomerId = Object.keys(servingCustomer)[0];
+                updates[`/${servingCustomerId}/status`] = 'completed';
+            }
+            
+            await queueRef.update(updates);
+            showToast(`Calling token #${nextCustomer.tokenNumber} - ${nextCustomer.customerName}`);
+        }
+        
+        async function removeCustomer(customerId) {
+            if (confirm("Are you sure you want to remove this person from the queue?")) {
+                await db.ref('tokenQueue/' + customerId).remove();
+                showToast("Removed from queue.");
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            try {
+                if (!firebase.apps.length) {
+                    firebase.initializeApp(firebaseConfig);
+                }
+                db = firebase.database();
+                
+                // Real-time listener for the queue
+                const queueRef = db.ref('tokenQueue').orderByChild('timestamp');
+                queueRef.on('value', (snapshot) => {
+                    const queueData = snapshot.val() || {};
+                    displayQueue(queueData);
+                });
+
+                document.getElementById('appointment-form').addEventListener('submit', saveAppointment);
+                document.getElementById('call-next-btn').addEventListener('click', callNextCustomer);
+
+            } catch (e) {
+                console.error("Firebase initialization failed:", e);
+                alert("Could not connect to the database. The app will not work.");
+            }
+        });
+
+        // Make functions globally accessible for inline event handlers
+        window.removeCustomer = removeCustomer;
+    </script>
+
+
+<script src="./script.js"></script></body></html>
