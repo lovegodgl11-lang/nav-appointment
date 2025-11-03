@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Liv count down "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Update version "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -92,6 +92,7 @@
         let db;
         let countdownIntervals = {};
         let previousWorkerTasks = {};
+        let workerTasks = {}; // Made global for access in countdown
         
         function showToast(message) {
             const toast = document.getElementById('toast');
@@ -108,10 +109,9 @@
             speechSynthesis.speak(utterance);
         }
         
-        function displayQueue(queueData, workerTasks) {
+        function displayQueue(queueData, currentWorkerTasks) {
             const tbody = document.getElementById('queue-tbody');
-            tbody.innerHTML = ''; // Clear existing rows
-             // Clear all existing intervals
+            // Clear all existing intervals first to prevent memory leaks
             Object.values(countdownIntervals).forEach(clearInterval);
             countdownIntervals = {};
             
@@ -123,7 +123,8 @@
 
             const sortedQueue = Object.entries(queueData).sort(([, a], [, b]) => a.tokenNumber - b.tokenNumber);
 
-            sortedQueue.forEach(([key, customer]) => {
+            // 1. Build the entire HTML string first for performance and to ensure elements exist.
+            const rowsHtml = sortedQueue.map(([key, customer]) => {
                 let statusClass = '';
                 let statusText = customer.status.charAt(0).toUpperCase() + customer.status.slice(1);
                 if (customer.status === 'serving') {
@@ -137,18 +138,18 @@
                 let actionsHtml = `<button onclick="removeCustomer('${key}')" class="text-red-500 hover:text-red-700 text-xs font-semibold">Remove</button>`;
                 
                 if (customer.status === 'serving') {
-                    const task = Object.values(workerTasks).find(t => t.orderId === key);
+                    const task = Object.values(currentWorkerTasks).find(t => t.orderId === key);
                     if (task && task.status === 'Completed') {
                         actionsHtml = `<span class="font-bold text-green-600">Task Complete!</span>`;
                     } else if (task && task.eta && task.etaSetTimestamp) {
+                        // Just prepare the placeholder div. The countdown will be started later.
                         actionsHtml = `<div id="countdown-${key}" class="font-semibold text-lg">--:--</div>`;
-                        startCountdown(key, task.eta, task.etaSetTimestamp);
                     } else {
                          actionsHtml = `<span class="text-xs text-gray-500">Awaiting worker ETA...</span>`;
                     }
                 }
 
-                const row = `
+                return `
                     <tr class="border-b">
                         <td class="px-4 py-3 font-bold text-lg">${customer.tokenNumber}</td>
                         <td class="px-4 py-3">${customer.customerName}</td>
@@ -157,7 +158,20 @@
                         <td class="px-4 py-3">${actionsHtml}</td>
                     </tr>
                 `;
-                tbody.innerHTML += row;
+            }).join('');
+            
+            // 2. Set the innerHTML of the table body in one go.
+            tbody.innerHTML = rowsHtml;
+            
+            // 3. Now that all elements are in the DOM, iterate again to start countdowns.
+            sortedQueue.forEach(([key, customer]) => {
+                if (customer.status === 'serving') {
+                    const task = Object.values(currentWorkerTasks).find(t => t.orderId === key);
+                    // Add status check here
+                    if (task && task.status !== 'Completed' && task.eta && task.etaSetTimestamp) {
+                        startCountdown(key, task.eta, task.etaSetTimestamp);
+                    }
+                }
             });
             
             const hasWaiting = sortedQueue.some(([, cust]) => cust.status === 'waiting');
@@ -174,8 +188,15 @@
                 const remainingSeconds = Math.max(0, totalSeconds - elapsedSeconds);
 
                 if (remainingSeconds === 0) {
-                    countdownEl.textContent = "Overdue";
-                    countdownEl.classList.add('countdown-overdue');
+                    // THE FIX: Before declaring "Overdue", check the live status.
+                    const liveTask = Object.values(workerTasks).find(t => t.orderId === orderId);
+                    if (liveTask && liveTask.status === 'Completed') {
+                        countdownEl.textContent = "Completed!";
+                        countdownEl.classList.remove('countdown-overdue');
+                    } else {
+                        countdownEl.textContent = "Overdue";
+                        countdownEl.classList.add('countdown-overdue');
+                    }
                     clearInterval(countdownIntervals[orderId]);
                 } else {
                     const minutes = Math.floor(remainingSeconds / 60);
@@ -298,7 +319,8 @@
                             }
                         }
                     });
-
+                    
+                    workerTasks = newWorkerTasks; // Update global state
                     previousWorkerTasks = newWorkerTasks; // Update state for next check
                     displayQueue(queueData, newWorkerTasks);
                 });
@@ -316,4 +338,4 @@
     </script>
 
 
-  <script src="./script.js"></script></body></html>
+<script src="./script.js"></script></body></html>
