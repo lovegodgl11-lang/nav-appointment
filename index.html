@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Call first "><meta charset="UTF-8">
+<html lang="en" class=""><head><script>window.livecodes = window.livecodes || {};</script><title>Nav appointment </title><meta name="title" content="Nav appointment "><meta name="description" content="Update select "><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0"><link rel="stylesheet" href="./style.css"><script src="https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js" async=""></script><script type="importmap">{
   "imports": {}
 }</script></head><body>
@@ -369,15 +369,30 @@
             
             try {
                 const counterRef = db.ref('tokenCounter');
-                const { committed, snapshot } = await counterRef.transaction(currentCount => {
-                    return (currentCount || 0) + 1;
+                const todayStr = new Date().toISOString().split('T')[0];
+
+                const { committed, snapshot } = await counterRef.transaction(currentData => {
+                    if (currentData === null) {
+                        return { count: 1, date: todayStr };
+                    }
+                    // Handle legacy number-only format
+                    if (typeof currentData !== 'object' || !currentData.date) {
+                        return { count: 1, date: todayStr };
+                    }
+                    if (currentData.date !== todayStr) {
+                        // It's a new day, reset the counter
+                        return { count: 1, date: todayStr };
+                    }
+                    // Same day, just increment
+                    currentData.count = (currentData.count || 0) + 1;
+                    return currentData;
                 });
 
                 if (!committed) {
                     throw new Error("Could not get a new token number. Please try again.");
                 }
 
-                const newTokenNumber = snapshot.val();
+                const newTokenNumber = snapshot.val().count;
                 
                 const queueRef = db.ref('tokenQueue');
                 const newCustomerRef = queueRef.push();
